@@ -9,7 +9,7 @@ use Ref::Store::Attribute;
 use Ref::Store::Dumper;
 
 
-our $VERSION = '0.01_0';
+our $VERSION = '0.02_0';
 use Log::Fu { level => "debug" };
 use Class::XSAccessor {
 	constructor => '_real_new',
@@ -440,21 +440,37 @@ sub unlink_a {
 *lexists_a = \&has_attr;
 
 sub DESTROY {
+	
 	my $self = shift;
-	#log_errf("Bye %d", $self+0);
-	foreach my $aobj (values %{$self->attr_lookup}) {
-		foreach my $v (values %{$aobj->get_hash}) {
-			$self->purge($v);
+	my @values;
+	foreach my $attr (values %{$self->attr_lookup}) {
+		foreach my $v (values %{$attr->get_hash}) {
+			next unless defined $v;
+			if($attr->can('unlink_value')) {
+				$attr->unlink_value($v);
+			}
+			push @values, $v;
 		}
 	}
 	
-	foreach my $v (values %{$self->forward}) {
+	foreach my $kobj (values %{$self->scalar_lookup}) {
+		my $v = $self->forward->{$kobj->kstring};
 		next unless defined $v;
-		$self->purge($v);
+		push @values, $v;
+		if($kobj->can("unlink_value")) {
+			$kobj->unlink_value($v);
+		}
+		delete $self->scalar_lookup->{$kobj->kstring};
+		delete $self->forward->{$kobj->kstring};
 	}
 	
+	foreach my $value (@values) {
+		delete $self->reverse->{$value+0};
+		$self->dref_del_ptr($value, $self->reverse, $value + 0);
+	}
+	undef @values;
+	
 	delete $Tables{$self+0};
-	#log_errf("Destroy: %p done", $self);
 }
 
 ################################################################################
@@ -486,6 +502,9 @@ sub ithread_predup {
 	foreach my $attr (values %{$self->attr_lookup}) {
 		weaken($CloneAddrs{$attr+0} = $attr);
 		$attr->ithread_predup($self, \%CloneAddrs);
+		foreach my $v (values %{$attr->get_hash}) {
+			weaken($CloneAddrs{$v+0} = $v);
+		}
 	}
 	
 	foreach my $vhash (values %{$self->reverse}) {
@@ -502,6 +521,10 @@ sub ithread_postdup {
 	foreach my $oldaddr (@oldkeys) {
 		my $vhash = $self->reverse->{$oldaddr};
 		my $vobj = $CloneAddrs{$oldaddr};
+		if(!defined $vobj) {
+			print Dumper(\%CloneAddrs);
+			die("KEY=$oldaddr");
+		}
 		my $newaddr = $vobj + 0;
 		$self->reverse->{$newaddr} = $vhash;
 		delete $self->reverse->{$oldaddr};

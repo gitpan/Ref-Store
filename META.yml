@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Ref-Store
-version:            0.01_0
+version:            0.02_0
 abstract:           Store objects, index by object, tag by objects - all without
 author:
     - M. Nunberg, <mnunberg@haskalah.org>
@@ -11,10 +11,12 @@ configure_requires:
 build_requires:
     ExtUtils::MakeMaker:  0
 requires:
-    Log::Fu:          0.05
-    Task::Weaken:     0
-    Test::More:       0
-    Variable::Magic:  0.43
+    Class::XSAccessor:   0
+    Constant::Generate:  0.03
+    Module::Stubber:     0
+    Task::Weaken:        0
+    Test::More:          0
+    Variable::Magic:     0.43
 no_index:
     directory:
         - t

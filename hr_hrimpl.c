@@ -55,14 +55,14 @@ static void k_encap_cleanup(SV *ksv, SV *_)
     
     SV *scalar_lookup, *forward, *reverse;
     
-    SvREFCNT(table)++;
+    //SvREFCNT(table)++;
     get_hashes(table,
                HR_HKEY_LOOKUP_REVERSE, &reverse,
                HR_HKEY_LOOKUP_FORWARD, &forward,
                HR_HKEY_LOOKUP_SCALAR, &scalar_lookup,
                HR_HKEY_LOOKUP_NULL
     );
-    SvREFCNT(table)--;
+    //SvREFCNT(table)--;
     
     
     if(!(scalar_lookup && forward && reverse)) {

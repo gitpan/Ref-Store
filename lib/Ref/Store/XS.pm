@@ -42,6 +42,8 @@ use Ref::Store::XS::cfunc;
 *unlink_value   = \&HRXSATTR_unlink_value;
 *get_hash       = \&HRXSATTR_get_hash;
 *kstring        = \&HRXSATTR_kstring;
+*ithread_predup = \&HRXSATTR_ithread_predup;
+*ithread_postdup= \&HRXSATTR_ithread_postdup;
 
 @Ref::Store::XS::Attribute::Encapsulating::ISA
     = qw(Ref::Store::XS::Attribute);
