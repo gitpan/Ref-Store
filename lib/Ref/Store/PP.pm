@@ -3,6 +3,7 @@ use strict;
 use warnings;
 use Scalar::Util qw(weaken refaddr);
 use Ref::Store::Common;
+use Carp::Heavy;
 use Ref::Store::PP::Magic;
 
 use base qw(Ref::Store::Key);
@@ -23,22 +24,28 @@ sub new {
     return $self;
 }
 
-#sub DESTROY {
-#    my $self = shift;
-#    delete $self->[HR_KFLD_TABLEREF]->scalar_lookup->{$self->[HR_KFLD_STRSCALAR]};
-#}
+sub ithread_predup {
+    #Perl data structures are still valid here..
+}
+
+sub ithread_postdup {
+    #PP::Magic information is dup'd as well, nothing for us here. Key is static
+}
 
 package Ref::Store::PP::Key::Encapsulating;
 use strict;
 use warnings;
 use base qw(Ref::Store::PP::Key);
 use Ref::Store::Common;
+use Ref::Store::Common qw(:pp_constants);
 use Ref::Store::PP::Magic;
 use Scalar::Util qw(weaken isweak);
 use Log::Fu;
-use constant {
-    HR_KFLD_VHREF => HR_KFLD_AVAILABLE() + 1
-};
+use Ref::Store::ThreadUtil;
+use Devel::GlobalDestruction;
+
+use constant HR_KFLD_VHREF => HR_KFLD_AVAILABLE() + 1;
+
 use Devel::Peek qw(Dump);
 
 sub new {
@@ -54,6 +61,42 @@ sub new {
     
     bless $self, $cls;
     return $self;
+}
+
+
+sub ithread_predup {
+    my ($self,$table,$ptr_map,$value) = @_;
+    hr_thrutil_store_kinfo(HR_THR_KENCAP_PREFIX, 
+        $self->[HR_KFLD_STRSCALAR], $ptr_map, $value+0);
+}
+
+sub ithread_postdup {
+    my ($self,$new_table,$ptr_map,$old_taddr) = @_;
+    
+    my $obj = $self->[HR_KFLD_REFSCALAR];
+    my $old_objaddr = $self->[HR_KFLD_STRSCALAR];
+    
+    hr_pp_trigger_replace_key(
+        $obj, $old_objaddr, $self->[HR_KFLD_TABLEREF]->scalar_lookup,
+        $obj + 0);
+    
+    my $old_vaddr = hr_thrutil_get_kinfo(
+        HR_THR_KENCAP_PREFIX, $old_objaddr, $ptr_map);
+    if(!$old_vaddr) {
+        print Dumper($ptr_map);
+        die("Couldn't find old value for key");
+    }
+    my $vhash = $ptr_map->{
+        HR_THR_LINFO_PREFIX . $old_taddr}->reverse->{$old_vaddr};
+    if(!$vhash) {
+        print Dumper($ptr_map->{HR_THR_LINFO_PREFIX.$old_taddr});
+        die("Couldn't find old vhash! ($old_vaddr)");
+    }
+    hr_pp_trigger_replace_key(
+        $obj, $old_objaddr, $vhash,
+        $obj + 0);
+
+    $self->[HR_KFLD_STRSCALAR] = $obj + 0;
 }
 
 sub link_value {
@@ -107,44 +150,39 @@ sub dump {
 use Data::Dumper;
 
 sub DESTROY {
+    return if in_global_destruction;
     my $self = shift;
     my $table = $self->[HR_KFLD_TABLEREF];
     my $obj = $self->[HR_KFLD_REFSCALAR];
     my $obj_s = $self->[HR_KFLD_STRSCALAR];
     
     delete $table->scalar_lookup->{$obj_s};
-    my $stored = delete $table->forward->{$obj_s};
+    my $value = delete $table->forward->{$obj_s};
     
     if($obj) {
-        #log_info("Unregistering triggers on $obj");
         hr_pp_trigger_unregister($obj, $table->scalar_lookup, $obj_s);
-        #hr_pp_trigger_unregister($obj, $table->forward);
-        #log_info("Done");
     }
     
     #log_info("Found stored.. $stored", $stored+0);
     
-    return unless $stored;
-    my $stored_privhash = $table->reverse->{$stored+0};
+    return unless $value;
+    my $vhash = $table->reverse->{$value+0};
     
-    if($stored && $obj) {
-        hr_pp_trigger_unregister($obj, $stored_privhash, $obj_s);
+    if(defined $value && defined $obj && defined $vhash) {
+        hr_pp_trigger_unregister($obj, $vhash, $obj_s);
     }
     
-    #log_info("STRSCALAR=", $self->[HR_KFLD_STRSCALAR]);
-    delete $stored_privhash->{$self->[HR_KFLD_STRSCALAR]};
-    
-    if(!scalar %$stored_privhash) {
-        #log_info("Table empty!");
-        delete $table->reverse->{$stored+0};
-        hr_pp_trigger_unregister($stored, $table->reverse, $obj_s);
+    if(defined $vhash) {
+        delete $vhash->{$self->[HR_KFLD_STRSCALAR]};
+        if(!%$vhash) {
+            #log_info("Table empty!");
+            delete $table->reverse->{$value+0};
+            hr_pp_trigger_unregister($value, $table->reverse, $obj_s);
+        }
     }
-    #else {
-    #    print Dumper($stored_privhash);
-    #    Dump($stored_privhash);
-    #}
-    #log_info("Done");
 }
+
+
 
 package Ref::Store::PP;
 use strict;
@@ -152,6 +190,9 @@ use warnings;
 use Scalar::Util qw(weaken refaddr);
 use base qw(Ref::Store);
 use Ref::Store::PP::Magic;
+use Ref::Store::Common qw(:pp_constants);
+use Ref::Store::ThreadUtil;
+
 
 use Log::Fu { level => "debug" };
 
@@ -186,6 +227,12 @@ sub dref_add_ptr {
 sub dref_del_ptr {
     my ($self,$value,$target,$mkey) = @_;
     hr_pp_trigger_unregister($value,$target,$mkey);
+}
+
+sub ithread_store_lookup_info {
+    my ($self,$ptr_map) = @_;
+    my $Linfo = Ref::Store::ThreadUtil::OldLookups->new($self);
+    $ptr_map->{HR_THR_LINFO_PREFIX . ($self + 0) } = $Linfo;
 }
 
 1;

@@ -7,9 +7,11 @@ use Scalar::Util qw(weaken);
 use Ref::Store::Common;
 use Ref::Store::Attribute;
 use Ref::Store::Dumper;
+use Scalar::Util qw(weaken isweak);
+use Devel::GlobalDestruction;
 
 
-our $VERSION = '0.02_0';
+our $VERSION = '0.04_0';
 use Log::Fu { level => "debug" };
 use Class::XSAccessor {
 	constructor => '_real_new',
@@ -332,10 +334,14 @@ sub new_attr {
 sub attr_get {
     my ($self,$attr,$t,%options) = @_;
 	
-	my $ustr =
-		($self->keytypes->{$t} or die "Can't find attribute type $t") .
-		$attr . (ref $attr ? $attr + 0 : $attr);
-	
+    my $ustr = $self->keytypes->{$t} or die "Couldn't find attribtue type!";
+    $ustr .= "#";
+    if(ref $attr) {
+        $ustr .= $attr+0;
+    } else {
+        die unless $attr;
+        $ustr .= $attr;
+    }
     my $aobj = $self->attr_lookup->{$ustr};
     return $aobj if $aobj;
     
@@ -344,27 +350,25 @@ sub attr_get {
     }
     
     $aobj = $self->new_attr($ustr, $attr, $self);
-    if($options{StrongAttr}) {
-        $self->attr_lookup->{$ustr} = $aobj;
-    } else {
+	weaken($self->attr_lookup->{$ustr} = $aobj);
+	
+    if(!$options{StrongAttr}) {
 		$aobj->weaken_encapsulated();
-        weaken($self->attr_lookup->{$ustr} = $aobj);
     }
-	#log_err("Stored $attr:$t");
     return $aobj;
 }
 
 sub store_a {
     my ($self,$attr,$t,$value,%options) = @_;
-    
-    my $aobj = $self->attr_get($attr, $t, Create => 1);
+	
+    my $aobj = $self->attr_get($attr, $t, Create => 1, %options);
 	if(!$value) {
 		log_err(@_);
 		die "NULL Value!";
 	}
+
     my $vaddr = $value + 0;
-    #log_warn("STORING $t:$attr:$value");
-    #weaken($self->reverse->{$vaddr}->{$aobj+0} = $aobj);
+
 	$self->reverse->{$vaddr}->{$aobj+0} = $aobj;
     
     if(!$options{StrongValue}) {
@@ -440,7 +444,7 @@ sub unlink_a {
 *lexists_a = \&has_attr;
 
 sub DESTROY {
-	
+	return if in_global_destruction;
 	my $self = shift;
 	my @values;
 	foreach my $attr (values %{$self->attr_lookup}) {
@@ -455,7 +459,6 @@ sub DESTROY {
 	
 	foreach my $kobj (values %{$self->scalar_lookup}) {
 		my $v = $self->forward->{$kobj->kstring};
-		next unless defined $v;
 		push @values, $v;
 		if($kobj->can("unlink_value")) {
 			$kobj->unlink_value($v);
@@ -510,7 +513,6 @@ sub ithread_predup {
 	foreach my $vhash (values %{$self->reverse}) {
 		weaken($CloneAddrs{$vhash+0} = $vhash);
 	}
-	log_info("Predup done");
 }
 
 use Carp qw(cluck);
@@ -538,23 +540,33 @@ sub ithread_postdup {
 		my $new_kstring = $kobj->kstring;
 		
 		next unless $new_kstring ne $kstring;
+		my $weak_key = isweak($self->scalar_lookup->{$kstring});
+		my $weak_val = isweak($self->forward->{$kstring});
 		
 		delete $self->scalar_lookup->{$kstring};
 		my $v = delete $self->forward->{$kstring};
 		
 		$self->scalar_lookup->{$new_kstring} = $kobj;
 		$self->forward->{$new_kstring} = $v;
-	}
-	
-	while ( my($astring,$aobj) = each %{$self->attr_lookup}) {
 		
+		if($weak_key) {
+			weaken($self->scalar_lookup->{$new_kstring});
+		}
+		if($weak_val) {
+			weaken($self->forward->{$new_kstring});
+		}
+	}
+		
+	@oldkeys = keys %{$self->attr_lookup};
+	foreach my $astring (@oldkeys) {
+		my $aobj = $self->attr_lookup->{$astring};
 		$aobj->ithread_postdup($self, \%CloneAddrs);
 		my $new_astring = $aobj->kstring;
 		
 		next unless $new_astring ne $astring;
 		
 		delete $self->attr_lookup->{$astring};
-		$self->attr_lookup->{$new_astring} = $aobj;
+		weaken($self->attr_lookup->{$new_astring} = $aobj);
 	}
 }
 
@@ -575,15 +587,12 @@ sub CLONE_SKIP {
 		$obj->ithread_predup();
 	}
 	
-	log_info("CLONE_SKIP done");
 	return 0;
 }
 
 sub CLONE {
 	my $pkg = shift;
 	return if $pkg ne __PACKAGE__;
-	log_info("CLONE: Begin");
-	#print Dumper(\%CloneAddrs);
 	
 	my @tkeys = keys %Tables;
 	my @new_tables;
@@ -1124,6 +1133,13 @@ the actual SV address of the reference, and whether the reference is a weak
 reference.
 
 =back
+
+=head2 THREAD SAFETY
+
+C<Ref::Store> is tested as being threadsafe in both the XS and PP backends.
+
+Thread safety was quite difficult since reference objects are keyed by their
+memory addresses, which change as those objects are duplicated.
 
 =head1 AUTHOR
 
