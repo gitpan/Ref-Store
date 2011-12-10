@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Ref-Store
-version:            0.05_0
+version:            0.08_0
 abstract:           Store objects, index by object, tag by objects - all without
 author:
     - M. Nunberg, <mnunberg@haskalah.org>
