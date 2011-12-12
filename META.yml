@@ -1,6 +1,6 @@
 --- #YAML:1.0
 name:               Ref-Store
-version:            0.08_0
+version:            0.15_0
 abstract:           Store objects, index by object, tag by objects - all without
 author:
     - M. Nunberg, <mnunberg@haskalah.org>
@@ -13,6 +13,7 @@ build_requires:
 requires:
     Class::XSAccessor:    0
     Constant::Generate:   0.03
+    Devel::FindRef:       1.422
     Devel::GlobalDestruction:  0.04
     Dir::Self:            0
     Module::Stubber:      0.02
