@@ -27,4 +27,4 @@ requires:
   Task::Weaken: 0
   Test::More: 0
   Variable::Magic: 0.47
-version: 0.19
+version: 0.20
